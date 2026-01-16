@@ -1,0 +1,23 @@
+[cmdk-root] {
+  @apply flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground;
+}
+
+[cmdk-input] {
+  @apply flex h-11 w-full rounded-md border-transparent bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+[cmdk-list] {
+  @apply max-h-[300px] overflow-y-auto overflow-x-hidden;
+}
+
+[cmdk-item] {
+  @apply relative flex cursor-default select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none aria-selected:bg-accent aria-selected:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50;
+}
+
+[cmdk-empty] {
+  @apply py-6 text-center text-sm text-muted-foreground;
+}
+
+[cmdk-loading] {
+  @apply py-6 text-center text-sm text-muted-foreground;
+}

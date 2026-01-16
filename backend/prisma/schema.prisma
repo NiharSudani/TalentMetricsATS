@@ -1,0 +1,214 @@
+// Prisma Schema for AURA-ATS
+// MongoDB with Atlas Vector Search for semantic search
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum CandidateStatus {
+  APPLIED
+  SCREENING
+  INTERVIEW
+  OFFERED
+  HIRED
+  REJECTED
+}
+
+enum JobStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+}
+
+enum AuditAction {
+  CREATED
+  UPDATED
+  DELETED
+  STATUS_CHANGED
+  SCORED
+  UPLOADED
+}
+
+// User model for authentication
+model User {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String   @unique
+  password  String   // Hashed with bcrypt
+  name      String
+  role      String   @default("HR") // HR, ADMIN, VIEWER
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  auditLogs AuditLog[]
+
+  @@map("users")
+}
+
+// Job Description model
+model Job {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  title       String
+  description String
+  department  String?
+  location    String?
+  status      JobStatus @default(DRAFT)
+  
+  // Weighting configuration for AI scoring
+  skillsWeight      Float @default(0.6) // 60% weight for skills
+  experienceWeight  Float @default(0.3) // 30% weight for experience
+  certsWeight       Float @default(0.1) // 10% weight for certifications
+  
+  // Requirements
+  requiredSkills      String[] // Array of required skills
+  requiredExperience  Int?     // Years of experience
+  requiredCerts       String[] // Array of required certifications
+  
+  // Vector embedding for semantic search (1536 dimensions for OpenAI/Voyage)
+  embedding           Float[] // Job description embedding for Atlas Vector Search
+  
+  // Metadata
+  createdBy   String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  closedAt    DateTime?
+
+  // Relations
+  applications Application[]
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("jobs")
+}
+
+// Candidate model with enhanced nested data
+model Candidate {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  firstName   String
+  lastName    String
+  email       String         @unique
+  phone       String?
+  location    String?
+  status      CandidateStatus @default(APPLIED)
+  
+  // Resume data (encrypted)
+  resumePath      String? // Path to encrypted resume file
+  resumeText      String? // Extracted text (encrypted)
+  
+  // Vector embedding for semantic search (1536 dimensions)
+  embedding       Float[] // Resume embedding for Atlas Vector Search
+  
+  // PCA/T-SNE coordinates for visualization (2D)
+  pcaCoordinates  Json?    // {x: Float, y: Float} for heatmap visualization
+  tsneCoordinates Json?    // {x: Float, y: Float} alternative visualization
+  
+  // Extracted data - using embedded JSON for nested structures
+  skills          Json?    // Array of {name: String, proficiency_score: Float}
+  experience      Int?     // Total years of experience
+  certifications  String[] // Certifications
+  
+  // Nested embedded data structures
+  workExperience  Json?    // Array of WorkExperience: {company: String, role: String, duration: String, description: String, startDate: String, endDate: String}
+  education       Json?    // Array of Education: {school: String, degree: String, year: Int, field: String}
+  
+  // AI Analysis
+  aiSummary       String? // AI-generated fit analysis
+  
+  // Metadata
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  // Relations
+  applications Application[]
+  processing   ResumeProcessing?
+
+  // Note: email already has @unique which creates an index
+  @@index([status])
+  @@index([createdAt])
+  @@map("candidates")
+}
+
+// Application model - Links Jobs and Candidates with scoring
+model Application {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  jobId       String         @db.ObjectId
+  candidateId String         @db.ObjectId
+  status      CandidateStatus @default(APPLIED)
+  
+  // AI Scoring (specific to this job-candidate match)
+  overallScore    Float?   // Overall match score (0-100)
+  skillsScore     Float?   // Skills match score
+  experienceScore Float?   // Experience match score
+  certsScore      Float?   // Certifications match score
+  
+  // Vector similarity score from Atlas Vector Search
+  vectorSimilarity Float?   // Cosine similarity score from $vectorSearch
+  
+  // Detailed scoring breakdown (JSON)
+  scoringBreakdown Json?    // {skillMatch: Float, expMatch: Float, cultureMatch: Float, vectorMatch: Float}
+  
+  // AI Analysis
+  aiSummary       String? // AI-generated fit analysis for this match (GPT-4o summary)
+  
+  // Metadata
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  
+  // Relations
+  job        Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  candidate  Candidate    @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, candidateId])
+  @@index([jobId])
+  @@index([candidateId])
+  @@index([status])
+  @@index([overallScore])
+  @@map("applications")
+}
+
+// Audit Log for tracking all changes (capped collection for performance)
+model AuditLog {
+  id          String      @id @default(auto()) @map("_id") @db.ObjectId
+  action      AuditAction
+  entityType  String      // "candidate", "job", "application", etc.
+  entityId    String
+  userId      String      @db.ObjectId
+  user        User        @relation(fields: [userId], references: [id])
+  
+  // Change details
+  oldValue    Json?
+  newValue    Json?
+  metadata    Json?       // Additional context
+  
+  createdAt   DateTime    @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// Resume Processing Queue (for tracking async processing)
+model ResumeProcessing {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  candidateId   String    @unique @db.ObjectId
+  candidate     Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  
+  status        String    @default("PENDING") // PENDING, PARSING, EMBEDDING, SCORING, COMPLETED, FAILED
+  progress      Int       @default(0) // 0-100
+  
+  errorMessage  String?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  completedAt   DateTime?
+
+  @@map("resume_processing")
+}
